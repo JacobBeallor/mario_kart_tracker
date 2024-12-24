@@ -97,9 +97,3 @@ class RaceResult(Base):
         CheckConstraint('finish_position BETWEEN 1 AND 12'),
         CheckConstraint('points_earned BETWEEN 1 AND 15'),
     )
-
-# Database connection and table creation
-def init_db(database_url):
-    engine = create_engine(database_url)
-    Base.metadata.create_all(engine)
-    return engine 
