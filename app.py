@@ -96,7 +96,6 @@ with tab3:
         else:
             player_to_add = selected_option
 
-    with col2:
         if st.button("Add to Prix"):
             if player_to_add:
                 # Initialize new player if needed
@@ -124,10 +123,66 @@ with tab3:
 
     # Prix Setup Form (just for starting the prix)
     with st.form("prix_setup"):
+        # Add Prix settings
+        st.subheader("Prix Settings")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            # CC Class selection
+            cc_class = st.selectbox(
+                "CC Class",
+                options=["50cc", "100cc", "150cc", "Mirror", "200cc"],
+                index=4,  # Default to 150cc
+            )
+
+            # Teams toggle
+            teams_enabled = st.toggle("Teams Enabled", value=False)
+
+            # Items selection
+            items_setting = st.selectbox(
+                "Items",
+                options=[
+                    "Normal Items",
+                    "No Items",
+                    "Shells Only",
+                    "Bananas Only",
+                    "Mushrooms Only",
+                    "Custom",
+                ],
+                index=0,
+            )
+
+        with col2:
+            # COM settings
+            com_level = st.selectbox(
+                "COM Level",
+                options=["Normal", "Hard"],
+                index=1,
+            )
+
+            com_vehicles = st.selectbox(
+                "COM Vehicles",
+                options=["All Vehicles", "Karts Only", "Bikes Only", "Random"],
+                index=0,
+            )
+
+            # Course selection
+            course_setting = st.selectbox(
+                "Courses",
+                options=[
+                    "Random",
+                    "Choose",
+                    "In Order",
+                ],
+                index=0,
+            )
+
+        # Number of races selection
         num_races = st.selectbox(
             "Number of Races",
-            options=[2, 4, 6, 8, 12, 16, 24, 48, 64],
-            index=0,  # Default to 4 races
+            options=[1, 4, 6, 8, 12, 16, 24, 48, 64],
+            index=0,
         )
 
         submit_setup = st.form_submit_button("Start Prix")
@@ -139,6 +194,15 @@ with tab3:
                 "players": st.session_state.selected_players_for_prix,
                 "races": [],
                 "num_races": num_races,
+                # Add new settings to prix data
+                "settings": {
+                    "cc_class": cc_class,
+                    "teams": teams_enabled,
+                    "items": items_setting,
+                    "com_level": com_level,
+                    "com_vehicles": com_vehicles,
+                    "courses": course_setting,
+                },
             }
             # Clear the selected players list
             st.session_state.selected_players_for_prix = []
@@ -301,6 +365,22 @@ with tab4:
     if st.session_state.prix_history:
         for prix in reversed(st.session_state.prix_history):
             with st.expander(f"{prix['name']} - {prix['date']}"):
+                # Display prix settings
+                st.subheader("Prix Settings")
+                settings = prix["settings"]
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write(f"CC Class: {settings['cc_class']}")
+                    st.write(f"Teams: {'Enabled' if settings['teams'] else 'Disabled'}")
+                    st.write(f"Items: {settings['items']}")
+                with col2:
+                    st.write(f"COM Level: {settings['com_level']}")
+                    st.write(f"COM Vehicles: {settings['com_vehicles']}")
+                    st.write(f"Courses: {settings['courses']}")
+
+                st.divider()
+
+                # Display race results
                 for race in prix["races"]:
                     st.write(f"Race {race['number']} - {race['track']}:")
                     for pos, player in enumerate(race["placements"], 1):
