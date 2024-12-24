@@ -13,6 +13,7 @@ if "players" not in st.session_state:
 if "selected_players_for_prix" not in st.session_state:
     st.session_state.selected_players_for_prix = []
 
+# move to pull from track database
 TRACK_LIST = [
     "Bowser's Castle",
     "Rainbow Road",
@@ -91,18 +92,185 @@ with tab3:
         )
 
         if selected_option == "+ Add New Player":
-            new_player = st.text_input("Enter New Player Name")
-            player_to_add = new_player if new_player.strip() else None
+            # Create columns for the new player form
+            col_fname, col_lname = st.columns(2)
+            with col_fname:
+                first_name = st.text_input("First Name")
+            with col_lname:
+                last_name = st.text_input("Last Name")
+            nickname = st.text_input("Nickname")
+            player_to_add = nickname
         else:
             player_to_add = selected_option
 
-        if st.button("Add to Prix"):
-            if player_to_add:
+        if player_to_add:
+            # Vehicle customization for all players
+            st.subheader("Kart Combo")
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                character = st.selectbox(
+                    "Character",
+                    options=[
+                        "Mario",
+                        "Luigi",
+                        "Peach",
+                        "Daisy",
+                        "Rosalina",
+                        "Tanooki Mario",
+                        "Cat Peach",
+                        "Yoshi",
+                        "Toad",
+                        "Koopa Troopa",
+                        "Shy Guy",
+                        "Lakitu",
+                        "Toadette",
+                        "King Boo",
+                        "Baby Mario",
+                        "Baby Luigi",
+                        "Baby Peach",
+                        "Baby Daisy",
+                        "Baby Rosalina",
+                        "Metal Mario",
+                        "Pink Gold Peach",
+                        "Wario",
+                        "Waluigi",
+                        "Donkey Kong",
+                        "Bowser",
+                        "Dry Bones",
+                        "Bowser Jr",
+                        "Dry Bowser",
+                        "Lemmy",
+                        "Larry",
+                        "Wendy",
+                        "Ludwig",
+                        "Iggy",
+                        "Roy",
+                        "Morton",
+                        "Inkling Girl",
+                        "Inkling Boy",
+                        "Link",
+                        "Villager (M)",
+                        "Villager (F)",
+                        "Isabelle",
+                        "Mii",
+                    ],
+                )
+
+            with col2:
+                kart = st.selectbox(
+                    "Kart",
+                    options=[
+                        "Standard Kart",
+                        "Pipe Frame",
+                        "Mach 8",
+                        "Steel Driver",
+                        "Cat Cruiser",
+                        "Circuit Special",
+                        "Tri-Speeder",
+                        "Badwagon",
+                        "Prancer",
+                        "Biddybuggy",
+                        "Landship",
+                        "Sneeker",
+                        "Sports Coupe",
+                        "Gold Standard",
+                        "Standard Bike",
+                        "Comet",
+                        "Sport Bike",
+                        "The Duke",
+                        "Flame Rider",
+                        "Varmint",
+                        "Mr. Scooty",
+                        "Jet Bike",
+                        "Yoshi Bike",
+                    ],
+                )
+
+            with col3:
+                wheels = st.selectbox(
+                    "Wheels",
+                    options=[
+                        "Standard",
+                        "Monster",
+                        "Roller",
+                        "Slim",
+                        "Slick",
+                        "Metal",
+                        "Button",
+                        "Off-Road",
+                        "Sponge",
+                        "Wood",
+                        "Cushion",
+                        "Blue Standard",
+                        "Hot Monster",
+                        "Azure Roller",
+                        "Crimson Slim",
+                        "Cyber Slick",
+                    ],
+                )
+
+            with col4:
+                glider = st.selectbox(
+                    "Glider",
+                    options=[
+                        "Super Glider",
+                        "Cloud Glider",
+                        "Wario Wing",
+                        "Waddle Wing",
+                        "Peach Parasol",
+                        "Parachute",
+                        "Parafoil",
+                        "Flower Glider",
+                        "Bowser Kite",
+                        "Plane Glider",
+                        "MKTV Parafoil",
+                        "Gold Glider",
+                    ],
+                )
+
+            if st.button("Add to Prix"):
                 # Initialize new player if needed
                 if player_to_add not in st.session_state.players:
                     st.session_state.players[player_to_add] = {
                         "total_races": 0,
+                        "player_info": (
+                            {
+                                "first_name": first_name,
+                                "last_name": last_name,
+                                "nickname": nickname,
+                                "vehicle": {
+                                    "character": character,
+                                    "kart": kart,
+                                    "wheels": wheels,
+                                    "glider": glider,
+                                },
+                            }
+                            if selected_option == "+ Add New Player"
+                            else {
+                                "first_name": player_to_add,
+                                "last_name": "",
+                                "nickname": player_to_add,
+                                "vehicle": {
+                                    "character": character,
+                                    "kart": kart,
+                                    "wheels": wheels,
+                                    "glider": glider,
+                                },
+                            }
+                        ),
                     }
+                else:
+                    # Update vehicle setup for existing player
+                    st.session_state.players[player_to_add]["player_info"][
+                        "vehicle"
+                    ] = {
+                        "character": character,
+                        "kart": kart,
+                        "wheels": wheels,
+                        "glider": glider,
+                    }
+
                 # Add to selected players
                 st.session_state.selected_players_for_prix.append(player_to_add)
                 st.rerun()
@@ -113,7 +281,12 @@ with tab3:
         for idx, player in enumerate(st.session_state.selected_players_for_prix):
             col1, col2 = st.columns([3, 1])
             with col1:
-                st.write(f"{idx + 1}. {player}")
+                vehicle = st.session_state.players[player]["player_info"]["vehicle"]
+                st.write(
+                    f"{idx + 1}. {player} "
+                    f"({vehicle['character']}, {vehicle['kart']}, "
+                    f"{vehicle['wheels']}, {vehicle['glider']})"
+                )
             with col2:
                 if st.button(f"Remove {player}", key=f"remove_{player}"):
                     st.session_state.selected_players_for_prix.remove(player)
