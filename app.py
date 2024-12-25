@@ -2,6 +2,10 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
+import numpy as np
+from database import get_db_context
+from sqlalchemy import func, desc, distinct
+from models import Prix, Race, RaceResult, Player
 
 # Initialize session state for storing data
 if "prix_history" not in st.session_state:
@@ -37,24 +41,176 @@ st.title("🏎️ Race Tournament Tracker")
 tab1, tab2, tab3, tab4 = st.tabs(["Home", "Player Profiles", "Create Prix", "History"])
 
 with tab1:
-    st.header("Leaderboard")
+    st.header("Player Leaderboard")
 
-    if st.session_state.players:
-        # Create leaderboard dataframe
-        leaderboard_data = []
-        for player, stats in st.session_state.players.items():
-            leaderboard_data.append(
+    # Fetch player rankings from database
+    with get_db_context() as db:
+        # Get player rankings sorted by ELO rating
+        prix_results = (
+            db.query(
+                Race.prix_id,
+                Player.player_nickname,
+                Player.elo_rating,
+                func.sum(RaceResult.points_earned).label('total_points'),
+                func.count(distinct(Race.race_id)).label('total_races'),
+                func.count(distinct(Race.race_id)).filter(RaceResult.finish_position == 1).label('races_won')
+            )
+            .join(RaceResult, Player.player_id == RaceResult.player_id)
+            .join(Race, RaceResult.race_id == Race.race_id)
+            .group_by(Race.prix_id, Player.player_nickname, Player.elo_rating)
+            .subquery()
+        )
+
+        prix_rankings = (
+            db.query(
+                prix_results.c.prix_id,
+                prix_results.c.player_nickname,
+                prix_results.c.elo_rating,
+                prix_results.c.total_races,
+                prix_results.c.races_won,
+                func.rank().over(
+                    partition_by=prix_results.c.prix_id,
+                    order_by=prix_results.c.total_points.desc()
+                ).label('prix_finish_position')
+            )
+            .subquery()
+        )
+
+        rankings = (
+            db.query(
+                prix_rankings.c.player_nickname,
+                prix_rankings.c.elo_rating,
+                prix_rankings.c.total_races,
+                prix_rankings.c.races_won,
+                (prix_rankings.c.races_won / prix_rankings.c.total_races).label('race_win_rate'),
+                func.count(distinct(prix_rankings.c.prix_id)).label('total_prixs'),
+                func.count(distinct(prix_rankings.c.prix_id)).filter(prix_rankings.c.prix_finish_position == 1).label('prixs_won'),
+                (func.count(distinct(prix_rankings.c.prix_id)).filter(prix_rankings.c.prix_finish_position == 1) / func.count(distinct(prix_rankings.c.prix_id))).label('prix_win_rate')
+            )
+            .group_by(prix_rankings.c.player_nickname, prix_rankings.c.elo_rating, prix_rankings.c.total_races, prix_rankings.c.races_won)
+            .order_by(prix_rankings.c.elo_rating.desc())
+            .all()
+        )
+
+        if rankings:
+            # Convert to DataFrame for easier manipulation
+            standings_df = pd.DataFrame([
                 {
-                    "Player": player,
-                    "Total Races": stats["total_races"],
+                    'Player': r.player_nickname,
+                    'ELO Rating': float(r.elo_rating),
+                    'Total Races': int(r.total_races)
                 }
+                for r in rankings
+            ])
+
+            # Get top 10 players
+            top_10 = standings_df.head(10)
+
+            # Create horizontal bar chart
+            fig = px.bar(
+                top_10,
+                x='ELO Rating',
+                y='Player',
+                orientation='h',
+                title='Top 10 Players by ELO Rating',
             )
 
-        df_leaderboard = pd.DataFrame(leaderboard_data)
-        df_leaderboard = df_leaderboard.sort_values("Total Races", ascending=False)
-        st.dataframe(df_leaderboard, use_container_width=True)
-    else:
-        st.info("No player data available yet. Create a Prix to get started!")
+            # Customize the bars
+            colors = ['gold', 'silver', '#CD7F32'] + ['#E8E8E8'] * 7  # Gold, Silver, Bronze + Gray for rest
+            medal_emojis = ['🥇', '🥈', '🥉']
+
+            # Update bar colors and add ELO rating labels
+            fig.update_traces(
+                marker_color=colors,
+                textposition='outside',
+                texttemplate='%{x:.0f}',  # Show ELO rating
+                textfont=dict(size=14)
+            )
+
+            # Customize y-axis labels (player names) with medals for top 3
+            fig.update_layout(
+                yaxis=dict(
+                    ticktext=[
+                        f"{medal_emojis[i]} {player}" if i < 3 else player
+                        for i, player in enumerate(top_10['Player'])
+                    ],
+                    tickvals=list(range(len(top_10))),
+                    autorange="reversed",  # Put highest rated player at top
+                    tickfont=dict(size=16)  # Make y-axis labels larger
+                ),
+                xaxis_title="ELO Rating",
+                yaxis_title="",
+                title_x=0.5,
+                title_font_size=20,
+                height=400,
+                margin=dict(l=10, r=10, t=40, b=10),
+                plot_bgcolor='rgba(0,0,0,0)',
+            )
+
+            # Add gridlines
+            fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='LightGray')
+            fig.update_yaxes(showgrid=False)
+
+            # Display the chart
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Create detailed standings table
+            table_data = pd.DataFrame([
+                {
+                    'Player': r.player_nickname,
+                    'ELO Rating': int(r.elo_rating),
+                    'Total Races': int(r.total_races),
+                    'Races Won': int(r.races_won),
+                    'Win Rate': f"{float(r.race_win_rate):.1%}",
+                    'Total Prix': int(r.total_prixs),
+                    'Prix Won': int(r.prixs_won),
+                    'Prix Win Rate': f"{float(r.prix_win_rate):.1%}"
+                }
+                for r in rankings
+            ])
+            
+            # Add ranking column
+            table_data.index = range(1, len(table_data) + 1)
+            table_data.index.name = 'Rank'
+            
+            # Display the table
+            st.dataframe(
+                table_data,
+                use_container_width=True,
+                column_config={
+                    'ELO Rating': st.column_config.NumberColumn(
+                        'ELO Rating',
+                        help='Player\'s current ELO rating'
+                    ),
+                    'Total Races': st.column_config.NumberColumn(
+                        'Total Races',
+                        help='Total number of races completed'
+                    ),
+                    'Races Won': st.column_config.NumberColumn(
+                        'Races Won',
+                        help='Number of races finished in 1st place'
+                    ),
+                    'Win Rate': st.column_config.TextColumn(
+                        'Win Rate',
+                        help='Percentage of races won'
+                    ),
+                    'Total Prix': st.column_config.NumberColumn(
+                        'Total Prix',
+                        help='Number of prix tournaments completed'
+                    ),
+                    'Prix Won': st.column_config.NumberColumn(
+                        'Prix Won',
+                        help='Number of prix tournaments won'
+                    ),
+                    'Prix Win Rate': st.column_config.TextColumn(
+                        'Prix Win Rate',
+                        help='Percentage of prix tournaments won'
+                    )
+                },
+                hide_index=False
+            )
+        else:
+            st.info("No race data available yet. Create a Prix to get started!")
 
 with tab2:
     st.header("Player Profiles")
