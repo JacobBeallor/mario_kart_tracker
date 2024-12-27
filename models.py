@@ -35,6 +35,7 @@ class Player(Base):
     player_first_name = Column(String(50), nullable=False)
     player_last_name = Column(String(50), nullable=False)
     player_nickname = Column(String(50), nullable=False)
+    elo_rating = Column(Integer, nullable=False, default=1500)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     race_results = relationship("RaceResult", back_populates="player")

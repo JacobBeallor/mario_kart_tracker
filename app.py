@@ -2,6 +2,10 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
+import numpy as np
+from database import get_db_context
+from sqlalchemy import func, desc, distinct
+from models import Prix, Race, RaceResult, Player, Track
 
 # Initialize session state for storing data
 if "prix_history" not in st.session_state:
@@ -32,44 +36,627 @@ TRACK_LIST = [
 ]
 
 st.set_page_config(page_title="Race Tracker", page_icon="🏎️", layout="wide")
-st.title("🏎️ Race Tournament Tracker")
+st.title("🏎️ Mario Kart Tracker")
 
 # Create tabs
 tab1, tab2, tab3, tab4 = st.tabs(["Home", "Player Profiles", "Create Prix", "History"])
 
 with tab1:
-    st.header("Leaderboard")
+    st.header("Player Leaderboard")
 
-    if st.session_state.players:
-        # Create leaderboard dataframe
-        leaderboard_data = []
-        for player, stats in st.session_state.players.items():
-            leaderboard_data.append(
+    # Fetch player rankings from database
+    with get_db_context() as db:
+        # Get player rankings sorted by ELO rating
+        prix_results = (
+            db.query(
+                Race.prix_id,
+                Player.player_nickname,
+                Player.elo_rating,
+                func.sum(RaceResult.points_earned).label('total_points'),
+                func.count(distinct(Race.race_id)).label('total_races'),
+                func.count(distinct(Race.race_id)).filter(RaceResult.finish_position == 1).label('races_won')
+            )
+            .join(RaceResult, Player.player_id == RaceResult.player_id)
+            .join(Race, RaceResult.race_id == Race.race_id)
+            .group_by(Race.prix_id, Player.player_nickname, Player.elo_rating)
+            .subquery()
+        )
+
+        prix_rankings = (
+            db.query(
+                prix_results.c.prix_id,
+                prix_results.c.player_nickname,
+                prix_results.c.elo_rating,
+                prix_results.c.total_races,
+                prix_results.c.races_won,
+                func.rank().over(
+                    partition_by=prix_results.c.prix_id,
+                    order_by=prix_results.c.total_points.desc()
+                ).label('prix_finish_position')
+            )
+            .subquery()
+        )
+
+        rankings = (
+            db.query(
+                prix_rankings.c.player_nickname,
+                prix_rankings.c.elo_rating,
+                prix_rankings.c.total_races,
+                prix_rankings.c.races_won,
+                (prix_rankings.c.races_won / prix_rankings.c.total_races).label('race_win_rate'),
+                func.count(distinct(prix_rankings.c.prix_id)).label('total_prixs'),
+                func.count(distinct(prix_rankings.c.prix_id)).filter(prix_rankings.c.prix_finish_position == 1).label('prixs_won'),
+                (func.count(distinct(prix_rankings.c.prix_id)).filter(prix_rankings.c.prix_finish_position == 1) / func.count(distinct(prix_rankings.c.prix_id))).label('prix_win_rate')
+            )
+            .group_by(prix_rankings.c.player_nickname, prix_rankings.c.elo_rating, prix_rankings.c.total_races, prix_rankings.c.races_won)
+            .order_by(prix_rankings.c.elo_rating.desc())
+            .all()
+        )
+
+        if rankings:
+            # Convert to DataFrame for easier manipulation
+            standings_df = pd.DataFrame([
                 {
-                    "Player": player,
-                    "Total Races": stats["total_races"],
+                    'Player': r.player_nickname,
+                    'ELO Rating': float(r.elo_rating),
+                    'Total Races': int(r.total_races)
+                }
+                for r in rankings
+            ])
+
+            # Get top 10 players
+            top_10 = standings_df.head(10)
+
+            # Create horizontal bar chart
+            fig = px.bar(
+                top_10,
+                x='ELO Rating',
+                y='Player',
+                orientation='h',
+                title='Top Players by ELO Rating',
+            )
+
+            # Customize the bars
+            colors = ['gold', 'silver', '#CD7F32'] + ['#E8E8E8'] * 7  # Gold, Silver, Bronze + Gray for rest
+            medal_emojis = ['🥇', '🥈', '🥉']
+
+            # Update bar colors and add ELO rating labels
+            fig.update_traces(
+                marker_color=colors,
+                textposition='outside',
+                texttemplate='%{x:.0f}',  # Show ELO rating
+                textfont=dict(size=14)
+            )
+
+            # Customize y-axis labels (player names) with medals for top 3
+            fig.update_layout(
+                yaxis=dict(
+                    ticktext=[
+                        f"{medal_emojis[i]} {player}" if i < 3 else player
+                        for i, player in enumerate(top_10['Player'])
+                    ],
+                    tickvals=list(range(len(top_10))),
+                    autorange="reversed",  # Put highest rated player at top
+                    tickfont=dict(size=16)  # Make y-axis labels larger
+                ),
+                xaxis_title="ELO Rating",
+                yaxis_title="",
+                margin=dict(l=10, r=10, t=40, b=10),
+                height=400,
+                plot_bgcolor='rgba(0,0,0,0)',
+                title={
+                    'text': 'Top Players by ELO Rating',
+                    'x': 0.5,
+                    'y': 0.95,
+                    'xanchor': 'center',
+                    'yanchor': 'top'
                 }
             )
 
-        df_leaderboard = pd.DataFrame(leaderboard_data)
-        df_leaderboard = df_leaderboard.sort_values("Total Races", ascending=False)
-        st.dataframe(df_leaderboard, use_container_width=True)
-    else:
-        st.info("No player data available yet. Create a Prix to get started!")
+            # Add gridlines
+            fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='LightGray')
+            fig.update_yaxes(showgrid=False)
+
+            # Display the chart
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Create detailed standings table
+            table_data = pd.DataFrame([
+                {
+                    'Player': r.player_nickname,
+                    'ELO Rating': int(r.elo_rating),
+                    'Total Races': int(r.total_races),
+                    'Races Won': int(r.races_won),
+                    'Win Rate': f"{float(r.race_win_rate):.1%}",
+                    'Total Prix': int(r.total_prixs),
+                    'Prix Won': int(r.prixs_won),
+                    'Prix Win Rate': f"{float(r.prix_win_rate):.1%}"
+                }
+                for r in rankings
+            ])
+            
+            # Add ranking column
+            table_data.index = range(1, len(table_data) + 1)
+            table_data.index.name = 'Rank'
+            
+            # Display the table
+            st.dataframe(
+                table_data,
+                use_container_width=True,
+                column_config={
+                    'ELO Rating': st.column_config.NumberColumn(
+                        'ELO Rating',
+                        help='Player\'s current ELO rating'
+                    ),
+                    'Total Races': st.column_config.NumberColumn(
+                        'Total Races',
+                        help='Total number of races completed'
+                    ),
+                    'Races Won': st.column_config.NumberColumn(
+                        'Races Won',
+                        help='Number of races finished in 1st place'
+                    ),
+                    'Win Rate': st.column_config.TextColumn(
+                        'Win Rate',
+                        help='Percentage of races won'
+                    ),
+                    'Total Prixs': st.column_config.NumberColumn(
+                        'Total Prixs',
+                        help='Number of prix tournaments completed'
+                    ),
+                    'Prixs Won': st.column_config.NumberColumn(
+                        'Prixs Won',
+                        help='Number of prix tournaments won'
+                    ),
+                    'Prix Win Rate': st.column_config.TextColumn(
+                        'Prix Win Rate',
+                        help='Percentage of prix tournaments won'
+                    )
+                },
+                hide_index=False
+            )
+        else:
+            st.info("No race data available yet. Create a Prix to get started!")
+    
+    st.header("Track Stats")
+    # Track selection dropdown
+    with get_db_context() as db:
+        available_tracks = [
+            track[0] for track in 
+            db.query(Track.track_name)
+            .distinct()
+            .order_by(Track.track_name)
+            .all()
+        ]
+        
+        if available_tracks:
+            selected_track = st.selectbox(
+                "Select a track to view player performance",
+                options=available_tracks
+            )
+
+            # Get total races for selected track
+            track_race_count = (
+                db.query(func.count(Race.race_id))
+                .join(Track, Race.track_id == Track.track_id)
+                .filter(Track.track_name == selected_track)
+                .scalar()
+            )
+            
+            # Get player with most wins on this track
+            track_winner = (
+                db.query(
+                    Player.player_nickname,
+                    func.count(RaceResult.result_id).label('wins')
+                )
+                .join(RaceResult, Player.player_id == RaceResult.player_id)
+                .join(Race, RaceResult.race_id == Race.race_id)
+                .join(Track, Race.track_id == Track.track_id)
+                .filter(Track.track_name == selected_track)
+                .filter(RaceResult.finish_position == 1)
+                .group_by(Player.player_nickname)
+                .order_by(desc('wins'))
+                .first()
+            )
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric(
+                    label="Total Times Raced",
+                    value=track_race_count
+                )
+            
+            with col2:
+                if track_winner:
+                    st.metric(
+                        label="Most Wins 🥇",
+                        value=f"{track_winner.player_nickname} ({track_winner.wins})"
+                    )
+                else:
+                    st.metric(
+                        label="Most Wins 🥇", 
+                        value="No wins recorded"
+                    )
+
+            # Get top 10 players by average finish position for selected track
+            track_rankings = (
+                db.query(
+                    Player.player_nickname,
+                    func.avg(RaceResult.points_earned).label('avg_points'),
+                    func.count(RaceResult.result_id).label('total_races')
+                )
+                .join(RaceResult, Player.player_id == RaceResult.player_id)
+                .join(Race, RaceResult.race_id == Race.race_id)
+                .join(Track, Race.track_id == Track.track_id)
+                .filter(Track.track_name == selected_track)
+                .group_by(Player.player_nickname)
+                .having(func.count(RaceResult.result_id) >= 1)
+                .order_by(desc('avg_points'))
+                .limit(10)
+                .all()
+            )
+
+            if track_rankings:
+                # Convert to DataFrame
+                df = pd.DataFrame(
+                    track_rankings,
+                    columns=['Player', 'Average Points', 'Total Races']
+                )
+                df['Average Points'] = df['Average Points'].round(2)
+
+                # Create horizontal bar chart for track rankings
+                fig = px.bar(
+                    df,
+                    x='Average Points',
+                    y='Player',
+                    orientation='h',
+                    text='Average Points',
+                )
+                
+                # Customize the bars
+                colors = ['gold', 'silver', '#CD7F32'] + ['#E8E8E8'] * 7
+                
+                # Update traces
+                fig.update_traces(
+                    marker_color=colors,
+                    textposition='outside',
+                    texttemplate='%{x:.2f}',
+                    cliponaxis=False
+                )
+                
+                # Customize layout
+                fig.update_layout(
+                    xaxis_range=[0, 15],
+                    xaxis_title="Average Points per Race",
+                    yaxis_title="",
+                    yaxis=dict(
+                        autorange="reversed",
+                        tickfont=dict(size=14)
+                    ),
+                    margin=dict(l=10, r=100, t=40, b=10),
+                    height=max(400, len(df) * 40),
+                    uniformtext=dict(
+                        mode='hide',
+                        minsize=10
+                    ),
+                    title={
+                        'text': f'Top Players on {selected_track}',
+                        'x': 0.5,
+                        'y': 0.95,
+                        'xanchor': 'center',
+                        'yanchor': 'top'
+                    }
+                )
+                
+                # Add gridlines
+                fig.update_xaxes(
+                    showgrid=True,
+                    gridwidth=1,
+                    gridcolor='LightGray',
+                    range=[0, 16]  # Give extra space for labels
+                )
+                fig.update_yaxes(showgrid=False)
+                
+                # Display chart
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info(f"No race data available for {selected_track}")
+        else:
+            st.info("No track data available yet. Create a Prix to get started!")
+
+    st.subheader("Track Distribution")
+
+    # Query database for track distribution
+    with get_db_context() as db:
+        track_counts = (
+            db.query(
+                Track.track_name,
+                func.count(Race.race_id).label('number_of_races')
+            )
+            .join(Race, Race.track_id == Track.track_id, isouter=True)
+            .group_by(Track.track_name)
+            .order_by(desc('number_of_races'))
+            .all()
+        )
+        
+        if track_counts:
+            # Convert to DataFrame
+            df = pd.DataFrame(track_counts, columns=['Track', 'Races'])
+            
+            # Calculate expected value if tracks were chosen equally
+            total_races = df['Races'].sum()
+            expected_races = total_races / len(TRACK_LIST)
+            
+            # Add missing tracks with 0 races
+            existing_tracks = df['Track'].tolist()
+            missing_tracks = [track for track in TRACK_LIST if track not in existing_tracks]
+            if missing_tracks:
+                df = pd.concat([
+                    df,
+                    pd.DataFrame({'Track': missing_tracks, 'Races': 0})
+                ])
+            
+            # Create horizontal bar chart
+            fig = px.bar(
+                df,
+                x='Races',
+                y='Track',
+                orientation='h',
+                text='Races'
+            )
+            
+            # Add expected value line
+            fig.add_vline(
+                x=expected_races,
+                line_dash="dash",
+                line_color="rgba(255, 0, 0, 0.5)",
+                annotation_text="Expected",
+                annotation_position="top"
+            )
+            
+            # Update layout with improved label visibility
+            fig.update_layout(
+                yaxis={'categoryorder': 'total ascending'},
+                showlegend=False,
+                margin=dict(l=10, r=10, t=40, b=10),
+                height=max(400, len(df) * 25),  # Dynamic height based on number of tracks
+                uniformtext=dict(mode='hide', minsize=8),  # Ensure consistent text size
+            )
+            
+            # Update traces to show labels
+            fig.update_traces(
+                textposition='outside',
+                texttemplate='%{x}',  # Show the number of races
+                cliponaxis=False  # Prevent labels from being cut off
+            )
+            
+            # Update axes
+            fig.update_xaxes(
+                title='Races',
+                showgrid=True,
+                gridwidth=1,
+                gridcolor='LightGray'
+            )
+            fig.update_yaxes(
+                title='',
+                showgrid=False,
+                tickfont=dict(size=12)  # Adjust track name font size
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No race data available yet to show track distribution.")
 
 with tab2:
     st.header("Player Profiles")
 
-    if st.session_state.players:
-        selected_player = st.selectbox(
-            "Select Player", list(st.session_state.players.keys())
-        )
-
+    # Add player selection dropdown
+    with get_db_context() as db:
+        # Get all unique player nicknames
+        players = db.query(Player.player_nickname).distinct().order_by(Player.player_nickname).all()
+        player_list = [p[0] for p in players]
+        
+        col1, _ = st.columns([1, 3])  # Create columns to constrain width
+        with col1:
+            selected_player = st.selectbox(
+                "Select Player",
+                player_list,
+                key="player_profile_select",
+                label_visibility="visible",
+                help="Choose a player to view their profile"
+            )        
+        
         if selected_player:
-            stats = st.session_state.players[selected_player]
-            st.metric("Total Races", stats["total_races"])
-    else:
-        st.info("No player data available yet. Create a Prix to get started!")
+            # Prix Statistics
+            all_prix_history = (
+                db.query(
+                    Prix.prix_id,
+                    Player.player_nickname,
+                    func.sum(RaceResult.points_earned).label('total_points'),
+                    func.rank().over(
+                        partition_by=Prix.prix_id,
+                        order_by=func.sum(RaceResult.points_earned).desc()
+                        ).label('finish_position')
+                )
+                .join(Race, Race.prix_id == Prix.prix_id)
+                .join(RaceResult, RaceResult.race_id == Race.race_id)
+                .join(Player, Player.player_id == RaceResult.player_id)
+                .group_by(Prix.prix_id, Player.player_nickname)
+                .subquery()
+            )
+
+            # Get total prix and prix wins
+            prix_stats = (
+                db.query(
+                    func.count(distinct(all_prix_history.c.prix_id)).label('total_prix'),
+                    func.count(distinct(all_prix_history.c.prix_id)).filter(
+                        all_prix_history.c.finish_position == 1
+                    ).label('prix_wins'),
+                    func.avg(all_prix_history.c.finish_position).label('average_finish_position')
+                )
+                .filter(all_prix_history.c.player_nickname == selected_player)
+                .first()
+            )
+
+            # Race Statistics 
+            race_stats = (
+                db.query(
+                    func.count(Race.race_id).label('total_races'),
+                    func.count(Race.race_id).filter(
+                        RaceResult.finish_position == 1
+                    ).label('race_wins'),
+                    func.avg(RaceResult.points_earned).label('average_points')
+                )
+                .join(RaceResult, RaceResult.race_id == Race.race_id)
+                .join(Player, Player.player_id == RaceResult.player_id)
+                .filter(Player.player_nickname == selected_player)
+                .first()
+            )
+
+            # Display Prix Stats
+            prix_col1, prix_col2, prix_col3, prix_col4 = st.columns(4)
+            with prix_col1:
+                st.metric("Prixs Won", prix_stats.prix_wins)
+            with prix_col2:
+                st.metric("Total Prixs", prix_stats.total_prix)
+            with prix_col3:
+                prix_win_rate = (prix_stats.prix_wins / prix_stats.total_prix * 100) if prix_stats.total_prix > 0 else 0
+                st.metric("Prix Win Rate", f"{prix_win_rate:.1f}%")
+            with prix_col4:
+                st.metric("Average Finish Position", f"{prix_stats.average_finish_position:.1f}")
+
+            # Display Race Stats
+            race_col1, race_col2, race_col3, race_col4 = st.columns(4)
+            with race_col1:
+                st.metric("Races Won", race_stats.race_wins)
+            with race_col2:
+                st.metric("Total Races", race_stats.total_races)
+            with race_col3:
+                race_win_rate = (race_stats.race_wins / race_stats.total_races * 100) if race_stats.total_races > 0 else 0
+                st.metric("Race Win Rate", f"{race_win_rate:.1f}%")
+            with race_col4:
+                st.metric("Average Points per Race", f"{race_stats.average_points:.1f}")
+
+            st.subheader(f"Top 10 tracks by avg points per race")
+            
+            st.subheader(f"Track specific stats")
+            # Create track selection dropdown
+            selected_track = st.selectbox(
+                "Select Track",
+                options=TRACK_LIST,
+                key="track_stats_selector"
+            )
+            
+            st.subheader(f"Prix History for {selected_player}")
+
+            # Get all prix history for selected player
+            all_prix_history = (
+                db.query(
+                    Prix.prix_id,
+                    Prix.date_played,
+                    Player.player_nickname,
+                    Prix.number_of_players.label('num_players'),
+                    Prix.race_count.label('num_races'),
+                    func.sum(RaceResult.points_earned).label('total_points'),
+                    func.rank().over(
+                        partition_by=Prix.prix_id,
+                        order_by=func.sum(RaceResult.points_earned).desc()
+                        ).label('finish_position')
+                )
+                .join(Race, Race.prix_id == Prix.prix_id)
+                .join(RaceResult, RaceResult.race_id == Race.race_id)
+                .join(Player, Player.player_id == RaceResult.player_id)
+                .group_by(Prix.prix_id, Prix.date_played, Player.player_nickname)
+                .subquery()
+            )
+
+            # Get prix history for selected player 
+            prix_history_filtered = (
+                db.query(
+                    all_prix_history.c.prix_id,
+                    all_prix_history.c.date_played,
+                    all_prix_history.c.num_players,
+                    all_prix_history.c.num_races,
+                    all_prix_history.c.total_points,
+                    all_prix_history.c.finish_position
+                )
+                .filter(all_prix_history.c.player_nickname == selected_player)
+                .order_by(all_prix_history.c.date_played.desc())
+                .all()
+            )
+            
+            if prix_history_filtered:
+                for prix in prix_history_filtered:
+                    # Create expander for each prix
+                    with st.expander(
+                        f"{prix.date_played.strftime('%Y-%m-%d')} - {prix.num_races} Races - "
+                        f"{prix.finish_position}{['st','nd','rd','th'][min(int(prix.finish_position)-1,3)]} Place"
+                    ):
+                        # Get detailed race results for this prix
+                        race_details = (
+                            db.query(
+                                Race.race_number,
+                                Track.track_name,
+                                RaceResult.finish_position,
+                                RaceResult.points_earned
+                            )
+                            .join(Track, Race.track_id == Track.track_id)
+                            .join(RaceResult, RaceResult.race_id == Race.race_id)
+                            .join(Player, RaceResult.player_id == Player.player_id)
+                            .filter(
+                                Race.prix_id == prix.prix_id,
+                                Player.player_nickname == selected_player
+                            )
+                            .order_by(Race.race_number)
+                            .all()
+                        )
+                        
+                        # Create DataFrame for race details
+                        races_df = pd.DataFrame([
+                            {
+                                'Race': f"Race {race.race_number}",
+                                'Track': race.track_name,
+                                'Position': f"{race.finish_position}{['st','nd','rd','th'][min(race.finish_position-1,3)]}",
+                                'Points': race.points_earned
+                            }
+                            for race in race_details
+                        ])
+                        
+                        # Show prix summary
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Total Points", prix.total_points)
+                        with col2:
+                            st.metric("Number of Races", prix.num_races)
+                        with col3:
+                            st.metric("Total Players", prix.num_players)
+                        
+                        # Show race details table
+                        st.dataframe(
+                            races_df,
+                            column_config={
+                                'Race': st.column_config.TextColumn(
+                                    'Race',
+                                    help='Race number in the prix'
+                                ),
+                                'Track': st.column_config.TextColumn(
+                                    'Track',
+                                    help='Track name'
+                                ),
+                                'Position': st.column_config.TextColumn(
+                                    'Position',
+                                    help='Finish position'
+                                ),
+                                'Points': st.column_config.NumberColumn(
+                                    'Points',
+                                    help='Points earned in this race'
+                                )
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
+            else:
+                st.info(f"No prix history found for {selected_player}")
 
 with tab3:
     st.header("Create Prix")
@@ -532,6 +1119,7 @@ with tab3:
                 },
             )
 
+# test comment
 with tab4:
     st.header("Prix History")
 
