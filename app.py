@@ -17,6 +17,9 @@ if "players" not in st.session_state:
 if "selected_players_for_prix" not in st.session_state:
     st.session_state.selected_players_for_prix = []
 
+if "combo_selections" not in st.session_state:
+    st.session_state.combo_selections = {}
+
 # move to pull from track database
 TRACK_LIST = [
     "Bowser's Castle",
@@ -741,7 +744,7 @@ with tab3:
 
         if player_to_add:
             # Vehicle customization for all players
-            st.subheader("Kart Combo")
+            st.write("Kart Combo")
             col1, col2, col3, col4 = st.columns(4)
 
             with col1:
@@ -866,47 +869,12 @@ with tab3:
                 )
 
             if st.button("Add to Prix"):
-                # Initialize new player if needed
-                if player_to_add not in st.session_state.players:
-                    st.session_state.players[player_to_add] = {
-                        "total_races": 0,
-                        "player_info": (
-                            {
-                                "first_name": first_name,
-                                "last_name": last_name,
-                                "nickname": nickname,
-                                "vehicle": {
-                                    "character": character,
-                                    "kart": kart,
-                                    "wheels": wheels,
-                                    "glider": glider,
-                                },
-                            }
-                            if selected_option == "+ Add New Player"
-                            else {
-                                "first_name": player_to_add,
-                                "last_name": "",
-                                "nickname": player_to_add,
-                                "vehicle": {
-                                    "character": character,
-                                    "kart": kart,
-                                    "wheels": wheels,
-                                    "glider": glider,
-                                },
-                            }
-                        ),
-                    }
-                else:
-                    # Update vehicle setup for existing player
-                    st.session_state.players[player_to_add]["player_info"][
-                        "vehicle"
-                    ] = {
-                        "character": character,
-                        "kart": kart,
-                        "wheels": wheels,
-                        "glider": glider,
-                    }
-
+                st.session_state.combo_selections[player_to_add] = {
+                    "character": character,
+                    "kart": kart,
+                    "wheels": wheels,
+                    "glider": glider,
+                }
                 # Add to selected players
                 st.session_state.selected_players_for_prix.append(player_to_add)
                 st.rerun()
@@ -917,7 +885,7 @@ with tab3:
         for idx, player in enumerate(st.session_state.selected_players_for_prix):
             col1, col2 = st.columns([3, 1])
             with col1:
-                vehicle = st.session_state.players[player]["player_info"]["vehicle"]
+                vehicle = st.session_state.combo_selections[player]
                 st.write(
                     f"{idx + 1}. {player} "
                     f"({vehicle['character']}, {vehicle['kart']}, "
@@ -926,6 +894,7 @@ with tab3:
             with col2:
                 if st.button(f"Remove {player}", key=f"remove_{player}"):
                     st.session_state.selected_players_for_prix.remove(player)
+                    del st.session_state.combo_selections[player]
                     st.rerun()
     else:
         st.info("Add players to the Prix using the selector above")
@@ -1081,11 +1050,6 @@ with tab3:
             == st.session_state.current_prix["num_races"]
         ):
             if st.button("Submit Prix Results"):
-                # Update player stats for all races in the prix
-                for race in st.session_state.current_prix["races"]:
-                    for player in race["placements"]:
-                        st.session_state.players[player]["total_races"] += 1
-
                 # Add to prix history and clean up
                 st.session_state.prix_history.append(st.session_state.current_prix)
                 del st.session_state.current_prix
