@@ -5,7 +5,7 @@ from datetime import datetime
 import numpy as np
 from database import get_db_context
 from sqlalchemy import func, desc, distinct
-from models import Prix, Race, RaceResult, Player, Track
+from models import Prix, Race, RaceResult, Player, Track, KartCombo
 
 # Initialize session state for storing data
 if "prix_history" not in st.session_state:
@@ -536,6 +536,55 @@ with tab2:
                 st.metric("Race Win Rate", f"{race_win_rate:.1f}%")
             with race_col4:
                 st.metric("Average Points per Race", f"{race_stats.average_points:.1f}")
+
+            st.subheader('Favourite Kart Combo')
+            favkart_combo = (
+                db.query(
+                    KartCombo.character_name,
+                    KartCombo.vehicle_name,
+                    KartCombo.tire_name,
+                    KartCombo.glider_name,
+                    func.count(distinct(Prix.prix_id)).label('total_prixs')
+                )
+                .join(Race, Race.prix_id == Prix.prix_id)
+                .join(RaceResult, RaceResult.race_id == Race.race_id)
+                .join(Player, Player.player_id == RaceResult.player_id)
+                .join(KartCombo, KartCombo.combo_id == RaceResult.combo_id)
+                .filter(Player.player_nickname == selected_player)
+                .group_by(KartCombo.character_name, KartCombo.vehicle_name, KartCombo.tire_name, KartCombo.glider_name)
+                .order_by(desc(func.count(distinct(Prix.prix_id))))
+                .first()
+            )
+
+            if favkart_combo:
+                kart_col1, kart_col2, kart_col3, kart_col4= st.columns(4)
+                
+                # Load and resize images to consistent height of 100px while maintaining aspect ratio
+                from PIL import Image
+                
+                def resize_image(image_path, target_height=100):
+                    img = Image.open(image_path)
+                    aspect_ratio = img.width / img.height
+                    new_width = int(target_height * aspect_ratio)
+                    return img.resize((new_width, target_height))
+                
+                with kart_col1:
+                    img = resize_image("images/characters/test_character.png")
+                    st.image(img, caption=favkart_combo.character_name)
+                
+                with kart_col2:
+                    img = resize_image("images/vehicles/test_vehicle.png")
+                    st.image(img, caption=favkart_combo.vehicle_name)
+                
+                with kart_col3:
+                    img = resize_image("images/tires/test_tires.png")
+                    st.image(img, caption=favkart_combo.tire_name)
+                
+                with kart_col4:
+                    img = resize_image("images/gliders/test_glider.png")
+                    st.image(img, caption=favkart_combo.glider_name)
+            else:
+                st.info("No kart combo data available yet")
 
             st.subheader(f"Top 10 tracks by avg points per race")
             
@@ -1119,33 +1168,141 @@ with tab3:
                 },
             )
 
-# test comment
 with tab4:
     st.header("Prix History")
+    
+    with get_db_context() as db:
+        # Get all prix with their winners
+        all_prix_history = (
+            db.query(
+                Prix.prix_id,
+                Prix.date_played,
+                Player.player_nickname,
+                Prix.number_of_players.label('num_players'),
+                Prix.race_count.label('num_races'),
+                func.sum(RaceResult.points_earned).label('total_points'),
+                func.rank().over(
+                    partition_by=Prix.prix_id,
+                    order_by=func.sum(RaceResult.points_earned).desc()
+                    ).label('finish_position')
+            )
+            .join(Race, Race.prix_id == Prix.prix_id)
+            .join(RaceResult, RaceResult.race_id == Race.race_id)
+            .join(Player, Player.player_id == RaceResult.player_id)
+            .group_by(Prix.prix_id, Prix.date_played, Player.player_nickname)
+            .subquery()
+        )
 
-    if st.session_state.prix_history:
-        for prix in reversed(st.session_state.prix_history):
-            with st.expander(f"{prix['name']} - {prix['date']}"):
-                # Display prix settings
-                st.subheader("Prix Settings")
-                settings = prix["settings"]
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.write(f"CC Class: {settings['cc_class']}")
-                    st.write(f"Teams: {'Enabled' if settings['teams'] else 'Disabled'}")
-                    st.write(f"Items: {settings['items']}")
-                with col2:
-                    st.write(f"COM Level: {settings['com_level']}")
-                    st.write(f"COM Vehicles: {settings['com_vehicles']}")
-                    st.write(f"Courses: {settings['courses']}")
+        prix_list = (
+            db.query(
+                all_prix_history.c.prix_id,
+                all_prix_history.c.date_played,
+                all_prix_history.c.num_players,
+                all_prix_history.c.num_races,
+                all_prix_history.c.total_points.label('winning_points'),
+                func.string_agg(all_prix_history.c.player_nickname, ' and ').label('winners')
+            )
+            .filter(all_prix_history.c.finish_position == 1)
+            .group_by(all_prix_history.c.prix_id, all_prix_history.c.date_played, all_prix_history.c.num_players, all_prix_history.c.num_races, all_prix_history.c.total_points)
+            .order_by(all_prix_history.c.date_played.desc())
+            .all()
+        )
 
-                st.divider()
+        if prix_list:
+            for prix in prix_list:
+                # Create expander for each prix
+                with st.expander(
+                    f"{prix.date_played.strftime('%Y-%m-%d')} - {prix.num_races} Races - "
+                    f"Winner: {prix.winners} ({prix.winning_points} pts)"
+                ):
+                    # Get all race results for this prix
+                    race_results = (
+                        db.query(
+                            Player.player_nickname,
+                            Race.race_number,
+                            Track.track_name,
+                            RaceResult.finish_position,
+                            RaceResult.points_earned,
+                            func.sum(RaceResult.points_earned).over(
+                                partition_by=Player.player_id
+                            ).label('total_points')
+                        )
+                        .join(RaceResult, Player.player_id == RaceResult.player_id)
+                        .join(Race, RaceResult.race_id == Race.race_id)
+                        .join(Track, Race.track_id == Track.track_id)
+                        .filter(Race.prix_id == prix.prix_id)
+                        .subquery()
+                    )
 
-                # Display race results
-                for race in prix["races"]:
-                    st.write(f"Race {race['number']} - {race['track']}:")
-                    for pos, player in enumerate(race["placements"], 1):
-                        st.write(f"{pos}. {player}")
-                    st.divider()
-    else:
-        st.info("No prix history available yet. Create a Prix to get started!")
+                    race_results_ranked = (
+                        db.query(
+                            race_results.c.player_nickname,
+                            race_results.c.race_number,
+                            race_results.c.track_name,
+                            race_results.c.points_earned,
+                            race_results.c.finish_position,
+                            race_results.c.total_points,
+                            func.dense_rank().over(
+                                order_by=race_results.c.total_points.desc()
+                            ).label('prix_position')
+                        )
+                        .order_by(
+                            race_results.c.total_points.desc(),
+                            race_results.c.race_number
+                        )
+                        .all()
+                    )
+
+                    # Create DataFrame
+                    data = {}
+                    for r in race_results_ranked:
+                        if r.player_nickname not in data:
+                            data[r.player_nickname] = {
+                                'Position': f"{r.prix_position}",
+                                'Total': r.total_points
+                            }
+                        race_key = f"Race {r.race_number} ({r.track_name})"
+                        data[r.player_nickname][race_key] = f"{r.points_earned} ({r.finish_position})"
+
+                    # Create DataFrame with player as index
+                    df = pd.DataFrame.from_dict(data, orient='index')
+                    
+                    # Reset index to make player a column
+                    df = df.reset_index().rename(columns={'index': 'Player'})
+                    
+                    # Ensure races are in correct order
+                    race_cols = [col for col in df.columns if col.startswith('Race')]
+                    race_cols.sort(key=lambda x: int(x.split()[1]))
+                    
+                    # Reorder columns: Position, Player, Races, Total
+                    df = df[['Position', 'Player'] + race_cols + ['Total']]
+
+                    # Display the table
+                    st.dataframe(
+                        df,
+                        column_config={
+                            'Position': st.column_config.TextColumn(
+                                'Position',
+                                help='Final position in the prix'
+                            ),
+                            'Player': st.column_config.TextColumn(
+                                'Player',
+                                help='Player nickname'
+                            ),
+                            'Total': st.column_config.NumberColumn(
+                                'Total Points',
+                                help='Total points earned'
+                            ),
+                            **{
+                                col: st.column_config.TextColumn(
+                                    col,
+                                    help='Points earned (Finish position)'
+                                )
+                                for col in race_cols
+                            }
+                        },
+                        use_container_width=True,
+                        hide_index=True  # Hide the index since we now have position column
+                    )
+        else:
+            st.info("No prix history available yet. Create a Prix to get started!")
