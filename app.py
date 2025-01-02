@@ -593,20 +593,23 @@ with tab2:
                     new_width = int(target_height * aspect_ratio)
                     return img.resize((new_width, target_height))
                 
+                def get_file_path(name, image_type):
+                    return f"images/{image_type}/{name.replace(" ", "_").replace("-", "_").lower()}.png"
+
                 with kart_col1:
-                    img = resize_image("images/characters/test_character.png")
+                    img = resize_image(get_file_path(favkart_combo.character_name, "characters"))
                     st.image(img, caption=favkart_combo.character_name)
                 
                 with kart_col2:
-                    img = resize_image("images/vehicles/test_vehicle.png")
+                    img = resize_image(get_file_path(favkart_combo.vehicle_name, "vehicles"))
                     st.image(img, caption=favkart_combo.vehicle_name)
                 
                 with kart_col3:
-                    img = resize_image("images/tires/test_tires.png")
+                    img = resize_image(get_file_path(favkart_combo.tire_name, "tires"))
                     st.image(img, caption=favkart_combo.tire_name)
                 
                 with kart_col4:
-                    img = resize_image("images/gliders/test_glider.png")
+                    img = resize_image(get_file_path(favkart_combo.glider_name, "gliders"))
                     st.image(img, caption=favkart_combo.glider_name)
             else:
                 st.info("No kart combo data available yet")
