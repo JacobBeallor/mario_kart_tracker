@@ -34,7 +34,7 @@ class Player(Base):
     player_id = Column(Integer, primary_key=True)
     player_first_name = Column(String(50), nullable=False)
     player_last_name = Column(String(50), nullable=False)
-    player_nickname = Column(String(50), nullable=False)
+    player_nickname = Column(String(50), nullable=False, unique=True)
     elo_rating = Column(Integer, nullable=False, default=1500)
     created_at = Column(DateTime, default=datetime.utcnow)
 
