@@ -20,23 +20,38 @@ if "selected_players_for_prix" not in st.session_state:
 if "combo_selections" not in st.session_state:
     st.session_state.combo_selections = {}
 
-# move to pull from track database
-TRACK_LIST = [
-    "Bowser's Castle",
-    "Rainbow Road",
-    "Mario Circuit",
-    "Luigi Circuit",
-    "Moo Moo Meadows",
-    "Mushroom Gorge",
-    "Coconut Mall",
-    "DK Summit",
-    "Wario's Gold Mine",
-    "Maple Treeway",
-    "Grumble Volcano",
-    "Dry Dry Ruins",
-    "Moonview Highway",
-    "Koopa Cape",
-]
+if "reset_player_selector" not in st.session_state:
+    st.session_state.reset_player_selector = False
+
+# Get track list from database
+with get_db_context() as db:
+    TRACK_LIST = [track.track_name for track in db.query(Track.track_name).order_by(Track.track_name).all()]
+
+
+# Add these mappings near the top of the file with other constants
+ITEMS_MAPPING = {
+    "Normal Items": "normal",
+    "No Items": "none",
+    "Shells Only": "shells_only",
+    "Bananas Only": "bananas_only",
+    "Mushrooms Only": "mushrooms_only",
+    "Custom": "custom_items",
+    "Bob-ombs Only": "bob-ombs_only",
+    "Coins Only": "coins_only",
+    "Frantic Items": "frantic_items",
+}
+
+COM_VEHICLES_MAPPING = {
+    "All Vehicles": "all",
+    "Karts Only": "karts_only",
+    "Bikes Only": "bikes_only"
+}
+
+COURSE_SETTING_MAPPING = {
+    "Random": "random",
+    "Choose": "choose",
+    "In Order": "in_order"
+}
 
 st.set_page_config(page_title="Race Tracker", page_icon="🏎️", layout="wide")
 st.title("🏎️ Mario Kart Tracker")
@@ -716,13 +731,18 @@ with tab3:
     # Player selection section (outside the form)
     st.subheader("Select Players")
 
+    players = db.query(Player.player_nickname).distinct().order_by(Player.player_nickname).all()
     # Single-select existing players with "Add New Player" option
     existing_players = [
-        p
-        for p in ["jacob", "jake", "josh", "jason", "jeff", "jordan", "jeremy"]
-        if p not in st.session_state.selected_players_for_prix
+        p.player_nickname
+        for p in players
+        if p.player_nickname not in st.session_state.selected_players_for_prix
     ]
     player_options = existing_players + ["+ Add New Player"]
+
+    if st.session_state.reset_player_selector:
+        st.session_state.player_selector = player_options[0]
+        st.session_state.reset_player_selector = False
 
     col1, col2 = st.columns([3, 1])
     with col1:
@@ -738,11 +758,23 @@ with tab3:
             with col_lname:
                 last_name = st.text_input("Last Name")
             nickname = st.text_input("Nickname")
-            player_to_add = nickname
+            
+            # Check for existing player immediately when nickname is entered
+            if nickname:
+                with get_db_context() as db:
+                    existing_player = db.query(Player).filter(Player.player_nickname == nickname).first()
+                    if existing_player:
+                        st.error(f"Player with nickname '{nickname}' already exists!")
+                        player_to_add = None
+                    else:
+                        player_to_add = nickname
+            else:
+                player_to_add = None
+
         else:
             player_to_add = selected_option
 
-        if player_to_add:
+        if player_to_add:  # Only show kart selection if we have a valid player
             # Vehicle customization for all players
             st.write("Kart Combo")
             col1, col2, col3, col4 = st.columns(4)
@@ -806,7 +838,7 @@ with tab3:
                         "Steel Driver",
                         "Cat Cruiser",
                         "Circuit Special",
-                        "Tri-Speeder",
+                        "Tri-Speeder", # 21 widmer go to the first parking lot two p signs first one in. go up to concierge 
                         "Badwagon",
                         "Prancer",
                         "Biddybuggy",
@@ -869,6 +901,18 @@ with tab3:
                 )
 
             if st.button("Add to Prix"):
+                # If this is a new player, add them to the database
+                if selected_option == "+ Add New Player":
+                    # Create new player
+                    new_player = Player(
+                        player_first_name=first_name,
+                        player_last_name=last_name,
+                        player_nickname=nickname,
+                    )
+                    with get_db_context() as db:
+                        db.add(new_player)
+                        db.commit()
+                
                 st.session_state.combo_selections[player_to_add] = {
                     "character": character,
                     "kart": kart,
@@ -877,6 +921,9 @@ with tab3:
                 }
                 # Add to selected players
                 st.session_state.selected_players_for_prix.append(player_to_add)
+                
+                # Set flag to reset selector on next rerun
+                st.session_state.reset_player_selector = True
                 st.rerun()
 
     # Display selected players with remove buttons
@@ -927,6 +974,9 @@ with tab3:
                     "Bananas Only",
                     "Mushrooms Only",
                     "Custom",
+                    "Bob-ombs Only",
+                    "Coins Only",
+                    "Frantic Items"
                 ],
                 index=0,
             )
@@ -941,7 +991,7 @@ with tab3:
 
             com_vehicles = st.selectbox(
                 "COM Vehicles",
-                options=["All Vehicles", "Karts Only", "Bikes Only", "Random"],
+                options=["All Vehicles", "Karts Only", "Bikes Only"],
                 index=0,
             )
 
@@ -959,29 +1009,68 @@ with tab3:
         # Number of races selection
         num_races = st.selectbox(
             "Number of Races",
-            options=[1, 4, 6, 8, 12, 16, 24, 48, 64],
+            options=[4, 6, 8, 12, 16, 24, 48, 64],
             index=0,
         )
 
         submit_setup = st.form_submit_button("Start Prix")
 
         if submit_setup and st.session_state.selected_players_for_prix:
-            st.session_state.current_prix = {
-                "name": f"Prix {len(st.session_state.prix_history) + 1}",
-                "date": datetime.now().strftime("%Y-%m-%d"),
-                "players": st.session_state.selected_players_for_prix,
-                "races": [],
-                "num_races": num_races,
-                # Add new settings to prix data
-                "settings": {
-                    "cc_class": cc_class,
-                    "teams": teams_enabled,
-                    "items": items_setting,
-                    "com_level": com_level,
-                    "com_vehicles": com_vehicles,
-                    "courses": course_setting,
-                },
-            }
+            # Create new prix in database
+            with get_db_context() as db:
+                new_prix = Prix(
+                    number_of_players=len(st.session_state.selected_players_for_prix),
+                    race_count=num_races,
+                    cc_class=150 if cc_class == "Mirror" else int(cc_class.replace("cc", "")),
+                    is_teams_mode=teams_enabled,
+                    items_setting=ITEMS_MAPPING[items_setting],
+                    com_level=com_level.lower(),
+                    com_vehicles=COM_VEHICLES_MAPPING[com_vehicles],
+                    courses_setting=COURSE_SETTING_MAPPING[course_setting],
+                    prix_type="vs_race",
+                    is_mirror_mode=cc_class == "Mirror",
+                )
+                db.add(new_prix)
+                db.commit()
+                
+                # Store prix_id in session state for later use
+                st.session_state.current_prix = {
+                    "prix_id": new_prix.prix_id,
+                    "players": st.session_state.selected_players_for_prix,
+                    "races": [],
+                    "num_races": num_races
+                }
+                
+                # Store kart combo selections in database
+                for player_nickname in st.session_state.combo_selections:
+                    combo = st.session_state.combo_selections[player_nickname]
+                    player = db.query(Player).filter(Player.player_nickname == player_nickname).first()
+                    
+                    # Check if combo already exists
+                    existing_combo = db.query(KartCombo).filter(
+                        KartCombo.character_name == combo["character"],
+                        KartCombo.vehicle_name == combo["kart"], 
+                        KartCombo.tire_name == combo["wheels"],
+                        KartCombo.glider_name == combo["glider"]
+                    ).first()
+
+                    if existing_combo:
+                        kart_combo = existing_combo
+                    else:
+                        kart_combo = KartCombo(
+                            character_name=combo["character"],
+                            vehicle_name=combo["kart"],
+                            tire_name=combo["wheels"],
+                            glider_name=combo["glider"]
+                        )
+                        db.add(kart_combo)
+                        db.commit()
+                    
+                    # Store the combo_id in session state for later use with race results
+                    if "combo_ids" not in st.session_state:
+                        st.session_state.combo_ids = {}
+                    st.session_state.combo_ids[player_nickname] = kart_combo.combo_id
+
             # Clear the selected players list
             st.session_state.selected_players_for_prix = []
             st.success("Prix created! Enter race results below.")
@@ -991,7 +1080,7 @@ with tab3:
 
     # Race Results Input
     if "current_prix" in st.session_state:
-        st.subheader(f"Enter Results for {st.session_state.current_prix['name']}")
+        st.subheader(f"Enter Results")
 
         race_num = len(st.session_state.current_prix["races"]) + 1
         if race_num <= st.session_state.current_prix["num_races"]:
@@ -1029,19 +1118,51 @@ with tab3:
 
                 if submit_race:
                     # Validate that all positions are unique
-                    if len(selected_positions) != len(
-                        st.session_state.current_prix["players"]
-                    ):
+                    if len(selected_positions) != len(st.session_state.current_prix["players"]):
                         st.error("Each player must have a unique position!")
                     else:
-                        # Store race results
-                        st.session_state.current_prix["races"].append(
-                            {
-                                "number": race_num,
-                                "track": track,
-                                "placements": placements,
-                            }
-                        )
+                        with get_db_context() as db:
+                            # Get or create track
+                            db_track = db.query(Track).filter(Track.track_name == track).first()
+
+                            # Create new race
+                            new_race = Race(
+                                prix_id=st.session_state.current_prix["prix_id"],
+                                track_id=db_track.track_id,
+                                race_number=race_num
+                            )
+                            db.add(new_race)
+                            db.commit()
+
+                            # Add race results for each player
+                            for player_nickname, position in placements.items():
+                                # Get player
+                                player = db.query(Player).filter(Player.player_nickname == player_nickname).first()
+                                
+                                # Calculate points based on position
+                                points = 15 if position == 1 else (
+                                    12 if position == 2 else (
+                                        10 if position == 3 else (13 - position)
+                                    )
+                                )
+
+                                # Create race result
+                                race_result = RaceResult(
+                                    race_id=new_race.race_id,
+                                    player_id=player.player_id,
+                                    combo_id=st.session_state.combo_ids[player_nickname],
+                                    finish_position=position,
+                                    points_earned=points
+                                )
+                                db.add(race_result)
+                            db.commit()
+
+                        # Store race results in session state (for display purposes)
+                        st.session_state.current_prix["races"].append({
+                            "number": race_num,
+                            "track": track,
+                            "placements": placements,
+                        })
                         st.rerun()
 
         # Show submit prix button when all races are completed
