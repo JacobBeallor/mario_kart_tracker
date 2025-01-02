@@ -5,6 +5,7 @@ from datetime import datetime
 import numpy as np
 from database import get_db_context
 from sqlalchemy import func, desc, distinct
+from mario_kart_tracker.elo import apply_elo_adjustments, calculate_elo_changes
 from models import Prix, Race, RaceResult, Player, Track, KartCombo
 
 # Initialize session state for storing data
@@ -1171,10 +1172,41 @@ with tab3:
             == st.session_state.current_prix["num_races"]
         ):
             if st.button("Submit Prix Results"):
-                # Add to prix history and clean up
-                st.session_state.prix_history.append(st.session_state.current_prix)
+                with get_db_context() as db:
+                    # Get final standings for this prix
+                    prix_results = (
+                        db.query(
+                            Player.player_id,
+                            Player.player_nickname,
+                            Player.elo_rating,
+                            func.sum(RaceResult.points_earned).label('total_points')
+                        )
+                        .join(RaceResult, Player.player_id == RaceResult.player_id)
+                        .join(Race, RaceResult.race_id == Race.race_id)
+                        .filter(Race.prix_id == st.session_state.current_prix["prix_id"])
+                        .group_by(Player.player_id, Player.player_nickname, Player.elo_rating)
+                        .order_by(desc('total_points'))
+                        .all()
+                    )
+
+                    # Calculate new ELO ratings
+                    placements = [(result.player_nickname, idx + 1) for idx, result in enumerate(prix_results)]
+                    current_ratings = {result.player_nickname: result.elo_rating for result in prix_results}
+                    
+                    # Calculate ELO changes
+                    elo_adjustments = calculate_elo_changes(placements, current_ratings)
+                    updated_ratings = apply_elo_adjustments(current_ratings, elo_adjustments)
+                    
+                    # Update player ELO ratings
+                    for player_nickname, new_elo in updated_ratings.items():
+                        db.query(Player).filter(Player.player_nickname == player_nickname).update(
+                            {'elo_rating': new_elo}
+                        )
+                    db.commit()
+
+                # Clean up session state
                 del st.session_state.current_prix
-                st.success("Prix completed!")
+                st.success("Prix completed and ELO ratings updated!")
                 st.rerun()
 
         # Add results table below the race input
