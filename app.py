@@ -737,9 +737,17 @@ with tab3:
 
     # Player selection section (outside the form)
     st.subheader("Select Players")
-
-    players = db.query(Player.player_nickname).distinct().order_by(Player.player_nickname).all()
-    # Single-select existing players with "Add New Player" option
+    
+    with get_db_context() as db:
+        # Get players sorted by their most recent race
+        players = (
+            db.query(Player.player_nickname, func.max(Race.created_at).label('last_race'))
+            .outerjoin(RaceResult, Player.player_id == RaceResult.player_id)
+            .outerjoin(Race, RaceResult.race_id == Race.race_id)
+            .group_by(Player.player_nickname)
+            .order_by(func.max(Race.created_at).desc().nulls_last(), Player.player_nickname)
+            .all()
+        )
     existing_players = [
         p.player_nickname
         for p in players
@@ -782,6 +790,29 @@ with tab3:
             player_to_add = selected_option
 
         if player_to_add:  # Only show kart selection if we have a valid player
+            # Get player's most recent kart combo
+            recent_character = None
+            recent_vehicle = None
+            recent_tire = None
+            recent_glider = None
+            
+            with get_db_context() as db:
+                most_recent_combo = (
+                    db.query(KartCombo)
+                    .join(RaceResult, RaceResult.combo_id == KartCombo.combo_id)
+                    .join(Race, Race.race_id == RaceResult.race_id)
+                    .join(Player, Player.player_id == RaceResult.player_id)
+                    .filter(Player.player_nickname == player_to_add)
+                    .order_by(Race.created_at.desc())
+                    .first()
+                )
+                
+                if most_recent_combo:
+                    recent_character = most_recent_combo.character_name
+                    recent_vehicle = most_recent_combo.vehicle_name
+                    recent_tire = most_recent_combo.tire_name
+                    recent_glider = most_recent_combo.glider_name
+
             # Vehicle customization for all players
             st.write("Kart Combo")
             col1, col2, col3, col4 = st.columns(4)
@@ -833,6 +864,50 @@ with tab3:
                         "Isabelle",
                         "Mii",
                     ],
+                    index=([
+                        "Mario",
+                        "Luigi",
+                        "Peach",
+                        "Daisy",
+                        "Rosalina",
+                        "Tanooki Mario",
+                        "Cat Peach",
+                        "Yoshi",
+                        "Toad",
+                        "Koopa Troopa",
+                        "Shy Guy",
+                        "Lakitu",
+                        "Toadette",
+                        "King Boo",
+                        "Baby Mario",
+                        "Baby Luigi",
+                        "Baby Peach",
+                        "Baby Daisy",
+                        "Baby Rosalina",
+                        "Metal Mario",
+                        "Pink Gold Peach",
+                        "Wario",
+                        "Waluigi",
+                        "Donkey Kong",
+                        "Bowser",
+                        "Dry Bones",
+                        "Bowser Jr",
+                        "Dry Bowser",
+                        "Lemmy",
+                        "Larry",
+                        "Wendy",
+                        "Ludwig",
+                        "Iggy",
+                        "Roy",
+                        "Morton",
+                        "Inkling Girl",
+                        "Inkling Boy",
+                        "Link",
+                        "Villager (M)",
+                        "Villager (F)",
+                        "Isabelle",
+                        "Mii",
+                    ].index(recent_character) if recent_character else 0)
                 )
 
             with col2:
@@ -863,6 +938,31 @@ with tab3:
                         "Jet Bike",
                         "Yoshi Bike",
                     ],
+                    index=([
+                        "Standard Kart",
+                        "Pipe Frame",
+                        "Mach 8",
+                        "Steel Driver",
+                        "Cat Cruiser",
+                        "Circuit Special",
+                        "Tri-Speeder", # 21 widmer go to the first parking lot two p signs first one in. go up to concierge 
+                        "Badwagon",
+                        "Prancer",
+                        "Biddybuggy",
+                        "Landship",
+                        "Sneeker",
+                        "Sports Coupe",
+                        "Gold Standard",
+                        "Standard Bike",
+                        "Comet",
+                        "Sport Bike",
+                        "The Duke",
+                        "Flame Rider",
+                        "Varmint",
+                        "Mr. Scooty",
+                        "Jet Bike",
+                        "Yoshi Bike",
+                    ].index(recent_vehicle) if recent_vehicle else 0)
                 )
 
             with col3:
@@ -886,6 +986,24 @@ with tab3:
                         "Crimson Slim",
                         "Cyber Slick",
                     ],
+                    index=([
+                        "Standard",
+                        "Monster",
+                        "Roller",
+                        "Slim",
+                        "Slick",
+                        "Metal",
+                        "Button",
+                        "Off-Road",
+                        "Sponge",
+                        "Wood",
+                        "Cushion",
+                        "Blue Standard",
+                        "Hot Monster",
+                        "Azure Roller",
+                        "Crimson Slim",
+                        "Cyber Slick",
+                    ].index(recent_tire) if recent_tire else 0)
                 )
 
             with col4:
@@ -906,6 +1024,20 @@ with tab3:
                         "Gold Glider",
                         "Paper Glider",
                     ],
+                    index=([
+                        "Super Glider",
+                        "Cloud Glider",
+                        "Wario Wing",
+                        "Waddle Wing",
+                        "Peach Parasol",
+                        "Parachute",
+                        "Parafoil",
+                        "Flower Glider",
+                        "Bowser Kite",
+                        "Plane Glider",
+                        "MKTV Parafoil",
+                        "Gold Glider",
+                    ].index(recent_glider) if recent_glider else 0)
                 )
 
             if st.button("Add to Prix"):
