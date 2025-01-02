@@ -100,14 +100,14 @@ with tab1:
             db.query(
                 prix_rankings.c.player_nickname,
                 prix_rankings.c.elo_rating,
-                prix_rankings.c.total_races,
-                prix_rankings.c.races_won,
-                (prix_rankings.c.races_won / prix_rankings.c.total_races).label('race_win_rate'),
+                func.sum(prix_rankings.c.total_races).label('total_races'),
+                func.sum(prix_rankings.c.races_won).label('races_won'),
+                (func.sum(prix_rankings.c.races_won) / func.sum(prix_rankings.c.total_races)).label('race_win_rate'),
                 func.count(distinct(prix_rankings.c.prix_id)).label('total_prixs'),
                 func.count(distinct(prix_rankings.c.prix_id)).filter(prix_rankings.c.prix_finish_position == 1).label('prixs_won'),
                 (func.count(distinct(prix_rankings.c.prix_id)).filter(prix_rankings.c.prix_finish_position == 1) / func.count(distinct(prix_rankings.c.prix_id))).label('prix_win_rate')
             )
-            .group_by(prix_rankings.c.player_nickname, prix_rankings.c.elo_rating, prix_rankings.c.total_races, prix_rankings.c.races_won)
+            .group_by(prix_rankings.c.player_nickname, prix_rankings.c.elo_rating)
             .order_by(prix_rankings.c.elo_rating.desc())
             .all()
         )
@@ -1037,6 +1037,7 @@ with tab3:
                         "Plane Glider",
                         "MKTV Parafoil",
                         "Gold Glider",
+                        "Paper Glider",
                     ].index(recent_glider) if recent_glider else 0)
                 )
 

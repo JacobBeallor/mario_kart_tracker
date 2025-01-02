@@ -11,28 +11,19 @@ def update_race_tracks():
     """Update specific races with correct track IDs."""
     with get_db_context() as db:
         # Get track IDs
-        rock_rock_mountain = db.query(Track).filter(Track.track_name == "Rock Rock Mountain").first()
-        dolphin_shoals = db.query(Track).filter(Track.track_name == "Dolphin Shoals").first()
+        new_york_minute = db.query(Track).filter(Track.track_name == "New York Minute").first()
 
-        if not rock_rock_mountain or not dolphin_shoals:
-            print("Error: Could not find one or more tracks")
+        if not new_york_minute:
+            print("Error: Could not find New York Minute track")
             return
 
-        # Update race 4
-        race4 = db.query(Race).filter(Race.race_id == 4).first()
+        # Update race 11
+        race4 = db.query(Race).filter(Race.race_id == 11).first()
         if race4:
-            race4.track_id = rock_rock_mountain.track_id
-            print(f"Updated race 4 to Rock Rock Mountain")
+            race4.track_id = new_york_minute.track_id
+            print(f"Updated race 11 to New York Minute")
         else:
-            print("Race 4 not found")
-
-        # Update race 5
-        race5 = db.query(Race).filter(Race.race_id == 5).first()
-        if race5:
-            race5.track_id = dolphin_shoals.track_id
-            print(f"Updated race 5 to Dolphin Shoals")
-        else:
-            print("Race 5 not found")
+            print("Race 11 not found")
 
         db.commit()
         print("\nUpdate complete!")
