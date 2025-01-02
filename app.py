@@ -5,7 +5,7 @@ from datetime import datetime
 import numpy as np
 from database import get_db_context
 from sqlalchemy import func, desc, distinct
-from mario_kart_tracker.elo import apply_elo_adjustments, calculate_elo_changes
+from elo import apply_elo_adjustments, calculate_elo_adjustments
 from models import Prix, Race, RaceResult, Player, Track, KartCombo
 
 # Initialize session state for storing data
@@ -533,28 +533,34 @@ with tab2:
             )
 
             # Display Prix Stats
-            prix_col1, prix_col2, prix_col3, prix_col4 = st.columns(4)
-            with prix_col1:
-                st.metric("Prixs Won", prix_stats.prix_wins)
-            with prix_col2:
-                st.metric("Total Prixs", prix_stats.total_prix)
-            with prix_col3:
-                prix_win_rate = (prix_stats.prix_wins / prix_stats.total_prix * 100) if prix_stats.total_prix > 0 else 0
-                st.metric("Prix Win Rate", f"{prix_win_rate:.1f}%")
-            with prix_col4:
-                st.metric("Average Finish Position", f"{prix_stats.average_finish_position:.1f}")
+            if prix_stats.total_prix > 0:
+                prix_col1, prix_col2, prix_col3, prix_col4 = st.columns(4)
+                with prix_col1:
+                    st.metric("Prixs Won", prix_stats.prix_wins)
+                with prix_col2:
+                    st.metric("Total Prixs", prix_stats.total_prix)
+                with prix_col3:
+                    prix_win_rate = (prix_stats.prix_wins / prix_stats.total_prix * 100) if prix_stats.total_prix > 0 else 0
+                    st.metric("Prix Win Rate", f"{prix_win_rate:.1f}%")
+                with prix_col4:
+                    st.metric("Average Finish Position", f"{prix_stats.average_finish_position:.1f}")
+            else:
+                st.info("No prix data available yet")
 
             # Display Race Stats
-            race_col1, race_col2, race_col3, race_col4 = st.columns(4)
-            with race_col1:
-                st.metric("Races Won", race_stats.race_wins)
-            with race_col2:
-                st.metric("Total Races", race_stats.total_races)
-            with race_col3:
-                race_win_rate = (race_stats.race_wins / race_stats.total_races * 100) if race_stats.total_races > 0 else 0
-                st.metric("Race Win Rate", f"{race_win_rate:.1f}%")
-            with race_col4:
-                st.metric("Average Points per Race", f"{race_stats.average_points:.1f}")
+            if race_stats.total_races > 0:
+                race_col1, race_col2, race_col3, race_col4 = st.columns(4)
+                with race_col1:
+                    st.metric("Races Won", race_stats.race_wins)
+                with race_col2:
+                    st.metric("Total Races", race_stats.total_races)
+                with race_col3:
+                    race_win_rate = (race_stats.race_wins / race_stats.total_races * 100) if race_stats.total_races > 0 else 0
+                    st.metric("Race Win Rate", f"{race_win_rate:.1f}%")
+                with race_col4:
+                    st.metric("Average Points per Race", f"{race_stats.average_points:.1f}")
+            else:
+                st.info("No race data available yet")
 
             st.subheader('Favourite Kart Combo')
             favkart_combo = (
@@ -898,6 +904,7 @@ with tab3:
                         "Plane Glider",
                         "MKTV Parafoil",
                         "Gold Glider",
+                        "Paper Glider",
                     ],
                 )
 
@@ -1194,7 +1201,7 @@ with tab3:
                     current_ratings = {result.player_nickname: result.elo_rating for result in prix_results}
                     
                     # Calculate ELO changes
-                    elo_adjustments = calculate_elo_changes(placements, current_ratings)
+                    elo_adjustments = calculate_elo_adjustments(placements, current_ratings)
                     updated_ratings = apply_elo_adjustments(current_ratings, elo_adjustments)
                     
                     # Update player ELO ratings
