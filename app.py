@@ -1331,9 +1331,18 @@ with tab3:
                         .order_by(desc('total_points'))
                         .all()
                     )
-
+                    
                     # Calculate new ELO ratings
-                    placements = [(result.player_nickname, idx + 1) for idx, result in enumerate(prix_results)]
+                    placements = []
+                    current_placement = 1
+                    current_high_score = prix_results[0].total_points
+                    for result in prix_results:
+                        if result.total_points < current_high_score:
+                            current_high_score = result.total_points
+                            current_placement = len(placements) + 1
+
+                        placements.append((result.player_nickname, current_placement))
+
                     current_ratings = {result.player_nickname: result.elo_rating for result in prix_results}
                     
                     # Calculate ELO changes
