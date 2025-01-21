@@ -1232,7 +1232,7 @@ with tab3:
                 st.write(f"Race {race_num}")
 
                 # Add track selection
-                track = st.selectbox("Select Track", options=TRACK_LIST)
+                track = st.selectbox("Select Track", options=TRACK_LIST, index=None, placeholder="Choose a track")
 
                 # Create columns for player names and their placements
                 col1, col2 = st.columns([2, 1])
