@@ -6,7 +6,7 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database import get_db_context
-from models import Player, Prix, Race, RaceResult
+from models import Player, Prix, Race, RaceResult, PrixResult
 from sqlalchemy import func
 from elo import calculate_elo_adjustments, apply_elo_adjustments
 
@@ -99,6 +99,34 @@ def recalculate_elo_ratings():
                     Player.player_nickname == player_nickname
                 ).update({"elo_rating": new_rating})
 
+            # After calculating new ratings, store the prix results
+            for player_nickname, placement in placements:
+                player = db.query(Player).filter(Player.player_nickname == player_nickname).first()
+                
+                # Create or update prix result
+                prix_result = (
+                    db.query(PrixResult)
+                    .filter(
+                        PrixResult.prix_id == prix.prix_id,
+                        PrixResult.player_id == player.player_id
+                    )
+                    .first()
+                )
+                
+                if not prix_result:
+                    prix_result = PrixResult(
+                        prix_id=prix.prix_id,
+                        player_id=player.player_id
+                    )
+                    db.add(prix_result)
+                
+                prix_result.placement = placement
+                prix_result.starting_elo = current_ratings[player_nickname]
+                prix_result.elo_adjustment = elo_adjustments[player_nickname]
+                prix_result.ending_elo = new_ratings[player_nickname]
+            
+            db.commit()
+
             # Print results for this prix
             print(f"Prix {prix.prix_id} results:")
             for player_nickname, placement in placements:
@@ -107,8 +135,6 @@ def recalculate_elo_ratings():
                 print(f"  {player_nickname}: {placement}th place, "
                       f"ELO {current_ratings[player_nickname]} → {new_rating} "
                       f"({'+'if adjustment > 0 else ''}{adjustment})")
-
-            db.commit()
 
         print("\nELO recalculation complete!")
 

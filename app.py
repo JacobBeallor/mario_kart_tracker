@@ -3,10 +3,11 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime
 import numpy as np
+import altair as alt
 from database import get_db_context
-from sqlalchemy import func, desc, distinct
+from sqlalchemy import func, desc, distinct, or_
 from elo import apply_elo_adjustments, calculate_elo_adjustments
-from models import Prix, Race, RaceResult, Player, Track, KartCombo
+from models import Prix, Race, RaceResult, Player, Track, KartCombo, PrixResult
 
 # Initialize session state for storing data
 if "prix_history" not in st.session_state:
@@ -237,6 +238,99 @@ with tab1:
         else:
             st.info("No race data available yet. Create a Prix to get started!")
     
+    st.header("ELO Rating History")
+    
+    # Get ELO rating history for each player
+    with get_db_context() as db:
+        # Get all prix results with dates
+        elo_history = (
+            db.query(
+                Player.player_nickname,
+                func.date(Prix.date_played).label('date'),
+                PrixResult.ending_elo
+            )
+            .join(PrixResult, Player.player_id == PrixResult.player_id)
+            .join(Prix, PrixResult.prix_id == Prix.prix_id)
+            .distinct(Player.player_nickname, func.date(Prix.date_played))
+            .order_by(
+                Player.player_nickname,
+                func.date(Prix.date_played),
+                Prix.date_played.desc()
+            )
+            .all()
+        )
+
+        if elo_history:
+            # Convert to DataFrame
+            df = pd.DataFrame([
+                {
+                    'Player': r[0],
+                    'Date': r[1],
+                    'ELO': r[2]
+                } for r in elo_history
+            ])
+
+            # Get min and max dates
+            min_date = df['Date'].min()
+            max_date = datetime.now().date()
+
+            # Create complete date range
+            date_range = pd.date_range(min_date, max_date, freq='D')
+
+            # Create list to store filled data
+            filled_data = []
+
+            # For each player
+            for player in df['Player'].unique():
+                player_data = df[df['Player'] == player]
+                
+                # Get player's first date
+                player_start = player_data['Date'].min()
+                
+                # Create date range from player's first date
+                player_dates = pd.date_range(player_start, max_date, freq='D')
+                
+                # Forward fill ELO ratings
+                player_elos = pd.Series(
+                    player_data.set_index('Date')['ELO']
+                ).reindex(player_dates).ffill()
+                
+                # Add to filled data
+                for date, elo in player_elos.items():
+                    filled_data.append({
+                        'Player': player,
+                        'Date': date,
+                        'ELO': elo
+                    })
+
+            # Create final DataFrame
+            df_filled = pd.DataFrame(filled_data)
+
+            # Add player selection
+            available_players = sorted(df_filled['Player'].unique())
+            selected_players = st.multiselect(
+                "Select players to display",
+                options=available_players,
+                default=available_players
+            )
+
+            # Filter data for selected players
+            df_filtered = df_filled[df_filled['Player'].isin(selected_players)]
+
+            # Create line chart
+            chart = alt.Chart(df_filtered).mark_line().encode(
+                x=alt.X('Date:T', title='Date'),
+                y=alt.Y('ELO:Q', title='ELO Rating', scale=alt.Scale(zero=False)),
+                color=alt.Color('Player:N', title='Player'),
+                tooltip=['Player', 'Date', 'ELO']
+            ).properties(
+                height=400
+            ).interactive()
+
+            st.altair_chart(chart, use_container_width=True)
+        else:
+            st.info("No ELO history available yet. Complete some Prix tournaments to see rating changes.")
+
     st.header("Track Stats")
     # Track selection dropdown
     with get_db_context() as db:
@@ -1227,24 +1321,91 @@ with tab3:
         st.subheader(f"Enter Results")
 
         race_num = len(st.session_state.current_prix["races"]) + 1
-        if race_num <= st.session_state.current_prix["num_races"]:
+        if race_num <= st.session_state.current_prix["num_races"]:            
+            # # Show track stats based on preview selection
+            # if preview_track:
+            #     current_players = st.session_state.current_prix["players"]
+                
+            #     with get_db_context() as db:
+            #         # First get all players
+            #         track_stats = []
+            #         for player in current_players:
+            #             result = (
+            #                 db.query(
+            #                     Player.player_nickname,
+            #                     func.avg(RaceResult.points_earned).label('avg_points')
+            #                 )
+            #                 .filter(Player.player_nickname == player)
+            #                 .outerjoin(RaceResult, Player.player_id == RaceResult.player_id)
+            #                 .outerjoin(Race, RaceResult.race_id == Race.race_id)
+            #                 .outerjoin(Track, Race.track_id == Track.track_id)
+            #                 .filter(or_(Track.track_name == preview_track, Track.track_name == None))
+            #                 .group_by(Player.player_nickname)
+            #                 .first()
+            #             )
+            #             # If no result found, add player with None avg_points
+            #             if not result:
+            #                 track_stats.append((player, None))
+            #             else:
+            #                 track_stats.append(result)
+                    
+            #         if track_stats:
+            #             # Create a simple table to display stats
+            #             stats_data = []
+            #             for player, avg_points in track_stats:
+            #                 if avg_points is not None:
+            #                     stats_data.append({"Player": player, "Avg Points": f"{avg_points:.1f}"})
+            #                 else:
+            #                     stats_data.append({"Player": player, "Avg Points": "N/A"})
+                        
+            #             stats_df = pd.DataFrame(stats_data)
+            #             st.dataframe(stats_df, hide_index=True)
+            #         else:
+            #             st.info("No previous stats for this track")
+
             with st.form(f"race_{race_num}"):
                 st.write(f"Race {race_num}")
 
                 # Add track selection
                 track = st.selectbox("Select Track", options=TRACK_LIST, index=None, placeholder="Choose a track")
-
+                
                 # Create columns for player names and their placements
                 col1, col2 = st.columns([2, 1])
 
                 placements = {}
                 selected_positions = set()
-
                 # First pass to collect all placements
                 with col1:
                     st.write("Player")
-                    for player in st.session_state.current_prix["players"]:
-                        st.write(player)
+                    current_players = st.session_state.current_prix["players"]
+
+                    if track:
+
+                        with get_db_context() as db:
+                            # First get all players
+                            track_stats = []
+                            for player in current_players:
+                                result = (
+                                    db.query(
+                                        Player.player_nickname,
+                                        func.avg(RaceResult.points_earned).label('avg_points')
+                                    )
+                                    .filter(Player.player_nickname == player)
+                                    .outerjoin(RaceResult, Player.player_id == RaceResult.player_id)
+                                    .outerjoin(Race, RaceResult.race_id == Race.race_id)
+                                    .outerjoin(Track, Race.track_id == Track.track_id)
+                                    .filter(or_(Track.track_name == track, Track.track_name == None))
+                                    .group_by(Player.player_nickname)
+                                    .first()
+                                )
+
+                                if result:
+                                    st.write(f"{player} ({result.avg_points:.1f} pts)")
+                                else:
+                                    st.write(f"{player} (N/A)")
+                    else:
+                        for player in current_players:
+                            st.write(player)
 
                 with col2:
                     st.write("Position")
@@ -1258,7 +1419,13 @@ with tab3:
                         placements[player] = position
                         selected_positions.add(position)
 
-                submit_race = st.form_submit_button("Submit Race Results")
+                col1_size= 0.115
+                col2_size = 0.101
+                cols = st.columns([col1_size, col2_size, 1 - col1_size - col2_size])
+                with cols[0]:
+                    submit_race = st.form_submit_button("Submit Race Results", type="primary")
+                with cols[1]:
+                    check_stats = st.form_submit_button("Check Track Stats", type="secondary")
 
                 if submit_race:
                     # Validate that all positions are unique
@@ -1349,6 +1516,26 @@ with tab3:
                     elo_adjustments = calculate_elo_adjustments(placements, current_ratings)
                     updated_ratings = apply_elo_adjustments(current_ratings, elo_adjustments)
                     
+                    # Store prix results in prix_results table
+                    for result in prix_results:
+                        player_nickname = result.player_nickname
+                        current_elo = result.elo_rating
+                        adjustment = elo_adjustments[player_nickname]
+                        new_elo = updated_ratings[player_nickname]
+                        
+                        # Get placement from placements list
+                        placement = next(p[1] for p in placements if p[0] == player_nickname)
+                        
+                        prix_result = PrixResult(
+                            prix_id=st.session_state.current_prix["prix_id"],
+                            player_id=result.player_id,
+                            placement=placement,
+                            starting_elo=current_elo,
+                            elo_adjustment=adjustment,
+                            ending_elo=new_elo
+                        )
+                        db.add(prix_result)
+
                     # Update player ELO ratings
                     for player_nickname, new_elo in updated_ratings.items():
                         db.query(Player).filter(Player.player_nickname == player_nickname).update(

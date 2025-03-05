@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey, CheckConstraint
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey, CheckConstraint, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
@@ -27,6 +27,7 @@ class Prix(Base):
     date_played = Column(DateTime, default=datetime.utcnow)
 
     races = relationship("Race", back_populates="prix")
+    prix_results = relationship("PrixResult", back_populates="prix")
 
 class Player(Base):
     __tablename__ = 'players'
@@ -39,6 +40,7 @@ class Player(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     race_results = relationship("RaceResult", back_populates="player")
+    prix_results = relationship("PrixResult", back_populates="player")
 
 class KartCombo(Base):
     __tablename__ = 'kart_combos'
@@ -97,4 +99,23 @@ class RaceResult(Base):
     __table_args__ = (
         CheckConstraint('finish_position BETWEEN 1 AND 12'),
         CheckConstraint('points_earned BETWEEN 1 AND 15'),
+    )
+
+class PrixResult(Base):
+    __tablename__ = 'prix_results'
+
+    result_id = Column(Integer, primary_key=True)
+    prix_id = Column(Integer, ForeignKey('prixs.prix_id'))
+    player_id = Column(Integer, ForeignKey('players.player_id'))
+    placement = Column(Integer, CheckConstraint("placement > 0"), nullable=False)
+    starting_elo = Column(Integer, nullable=False)
+    elo_adjustment = Column(Integer, nullable=False)
+    ending_elo = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    prix = relationship("Prix", back_populates="prix_results")
+    player = relationship("Player", back_populates="prix_results")
+
+    __table_args__ = (
+        UniqueConstraint('prix_id', 'player_id', name='uq_prix_player'),
     )
